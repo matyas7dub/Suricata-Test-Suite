@@ -108,12 +108,19 @@ def pytest_addoption(parser):
         action="store",
         help=("Change the pcap file (path) that Trex pushes remote in STL mode."),
     )
-
     parser.addoption(
-        "--change-vlan",
-        default=False,
-        action="store_true",
-        help=("Change VLAN ID in pcap file."),
+        "--target-mac",
+        type=str,
+        default="",
+        action="store",
+        help=("Mac address to send traffic to when not using ASTF TRex."),
+    )
+    parser.addoption(
+        "--target-vlan",
+        type=int,
+        default=0,
+        action="store",
+        help=("Generate traffic with this VLAN ID. 0 (default) for untagged."),
     )
 
 
@@ -200,8 +207,13 @@ def get_path_to_pcap(request):
 
 
 @pytest.fixture()
-def change_vlan_id(request):
-    return request.config.getoption("--change-vlan")
+def get_target_mac(request):
+    return request.config.getoption("--target-mac")
+
+
+@pytest.fixture()
+def get_target_vlan(request):
+    return request.config.getoption("--target-vlan")
 
 
 def return_filename(pcap_filename):

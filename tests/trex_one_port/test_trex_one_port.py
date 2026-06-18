@@ -27,9 +27,6 @@ from conftest import (
     return_filename,
 )
 
-TARGET_VLAN = 15  # claret
-TARGET_MAC = "08:C0:EB:88:C5:38"
-
 
 @pytest.mark.parametrize(
     "rules_config",
@@ -51,7 +48,8 @@ def test_trex_one_port(
     get_traffic_duration: int,
     get_heatup_duration: int,
     get_path_to_pcap: str,
-    change_vlan_id: bool,
+    get_target_mac: str,
+    get_target_vlan: int,
     rules_config: dict,
 ):
     trex_manager: trex.TRexManager = trex.TRexManager(
@@ -79,19 +77,16 @@ def test_trex_one_port(
     )
 
     traffic_generator: trex.TRexStateless = trex_manager.request_stateless(request)
-    traffic_generator.set_dst_mac(TARGET_MAC)
-    traffic_generator.set_vlan(TARGET_VLAN)
+    traffic_generator.set_dst_mac(get_target_mac)
+    if get_target_vlan != 0:
+        traffic_generator.set_vlan(get_target_vlan)
 
     test_variant_name = f"{suri_conf.test_name}_{rules_config['name']}"
     trex_multipliers: List[float] = get_trex_multi(
         get_settings_file, suri_conf.server, suri_conf.pcie, test_variant_name
     )
 
-    if change_vlan_id:
-        pcap_filename = edit_vlan(get_path_to_pcap, TARGET_VLAN)
-    else:
-        pcap_filename = get_path_to_pcap
-
+    pcap_filename = edit_vlan(get_path_to_pcap, get_target_vlan)
     send_pcap_to_trex(pcap_filename, request)
 
     for idx, multiplier in enumerate(trex_multipliers, 1):
