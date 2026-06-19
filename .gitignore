@@ -1,0 +1,10 @@
+.venv
+.env
+.vscode
+
+__pycache__
+tmp
+bkp
+
+param.py
+results
