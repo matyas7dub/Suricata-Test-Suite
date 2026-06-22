@@ -434,7 +434,12 @@ def get_trex_multi(test_settings_file, server, pci, test_name):
             .replace("[", "")
             .replace("]", "")
         )
-        multipliers = [float(i) for i in query_result.split(",")]
+        try:
+            multipliers = [float(i) for i in query_result.split(",")]
+        except ValueError:
+            raise ValueError(
+                f"No match found for {server} and {pci} in {test_settings_file}:{test_name}"
+            )
         return multipliers
 
 
