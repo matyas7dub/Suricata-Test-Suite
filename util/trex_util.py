@@ -50,6 +50,20 @@ def mkdir_remote(dir: Path, hostname: str):
     mkdir.run()
 
 
+def get_trex_mac(hostname: str, pci: str, trex_version: str):
+    executor = remote_executor.RemoteExecutor(host=hostname, user=os.environ["USER"])
+    get_mac = executable.Tool(
+        f"cd /opt/trex/{trex_version} && ./dpdk_setup_ports.py -t | grep {pci[5:]} | awk '{{print $8}}'",
+        executor=executor,
+        sudo=True,
+    )
+    stdout, _ = get_mac.run()
+
+    stdout = str(stdout).strip()
+    assert len(stdout) == 17, f"Couldn't get MAC address for {pci}"
+    return stdout
+
+
 def str_to_trex_mode(mode: str) -> TrexMode | None:
     match mode.lower():
         case "astf":

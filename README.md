@@ -404,7 +404,8 @@ or [STL](https://trex-tgn.cisco.com/trex/doc/trex_stateless.html).
 
 For **all modes** you will want to create a subclass of `BaseTrexClientManager` and pass a list with tuples of paths to individual
 pcaps and "weights" of the pcaps. See the comment under `BaseTrexClientManager` for the interpretations of weights in the 
-individual TRex modes.
+individual TRex modes. `BaseTrexClientManager` tries to provide usable defaults for all modes, but it should be easy to extend
+with exactly the functionality that you need.
 
 If you want to place files into a specific directory on your remote server you can redefine the `get_remote_data_path` function
 which gets called for every file that gets sent to the remote.
@@ -413,14 +414,18 @@ When defining an **ASTF profile** you likely want to define the `get_astf_profil
 This can either be a standalone function which creates the profile from scratch or it can use a "native" TRex profile file. The latter
 is preferred as it leads to simpler tuning and debugging. For examples see `http_trex_profile`.
 
-When defining an **STF profile** you need to define `get_stf_profile` which should return a path to an already existing
+When defining an **STF profile** you might want to define `get_stf_profile` which should return a path to a
 [traffic profile](https://trex-tgn.cisco.com/trex/doc/trex_manual.html#_traffic_yaml_f_argument_of_stateful).
+You should generate these dynamically, since the profile contains MAC addresses and a mismatch will cause
+your packets to not be delivered.
+
 You might also want to change some things in the [platform config](https://trex-tgn.cisco.com/trex/doc/trex_manual.html#_platform_yaml_cfg_argument)
 which can be done by defining an `stf_config_hook`. This function gets a `ConfigBuilder` instance with the config that would be sent to
 trex and you can either modify this or create a completely new `ConfigBuilder` instance.
 For examples see `realistic_traffic_trex_profile.py`
 
-**STL profiles** are defined only with a list of PCAPs and should only really be used as a simple fallback when only one TRex instance is available.
+**STL profiles** are defined only with a list of PCAPs and should really only be used as a simple fallback, but STF is preferred
+and can be used in the same situations as STL.
 
 You are not limited to one TRex mode per profile. For example you can define a TRex profile that has a native ASTF TRex config, which is used for
 the ASTF mode and `get_stf_profile` uses it to create an STF profile dynamically.
