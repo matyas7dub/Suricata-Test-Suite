@@ -18,22 +18,26 @@ DEFALUT_CONF_FILE = "/etc/suricata/suricata.yaml"
 DEFAULT_RULES_FILE = "/var/lib/suricata/rules/suricata.rules"
 REMOTE_SURICATA_DIR = f"/tmp/suricata-{int(time.time())}/"
 
+
 class SuriDown(Exception):
     """Exception raised for custom error, if Suricata is down."""
+
     pass
 
-class Suricata_manager():
-    def __init__(self,
-                 request,
-                 suricata_tmp_stats_path: str,
-                 interface: str,
-                 capture_mode: str,
-                 workers: List[int]=[],
-                 asynch: bool=False,
-                 log_dir: str = "/var/log/suricata",
-                 conf_file: str = DEFALUT_CONF_FILE,
-                 rules_file: str = DEFAULT_RULES_FILE,
-                 ):
+
+class Suricata_manager:
+    def __init__(
+        self,
+        request,
+        suricata_tmp_stats_path: str,
+        interface: str,
+        capture_mode: str,
+        workers: List[int] = [],
+        asynch: bool = False,
+        log_dir: str = "/var/log/suricata",
+        conf_file: str = DEFALUT_CONF_FILE,
+        rules_file: str = DEFAULT_RULES_FILE,
+    ):
         """Class Suricata_manager for controlling Suricata instance on remote machine
 
         Parameters
@@ -78,7 +82,9 @@ class Suricata_manager():
         self.workers: List[int] = workers
         self._pid_file = SURI_PID
 
-        self.host_executor: remote_executor.Executor = remote_executor.RemoteExecutor(host=self.host_server, user=self.user)
+        self.host_executor: remote_executor.Executor = remote_executor.RemoteExecutor(
+            host=self.host_server, user=self.user
+        )
 
         self.addfinalizer(request)
         self._set_log(log_dir)
@@ -117,7 +123,9 @@ class Suricata_manager():
             file_name: str = conf_file.split("/")[-1]
             remote_conf_file = f"{REMOTE_SURICATA_DIR}{file_name}"
 
-            process_copy_conf_to_remote = executable.Tool(f"rsync -a {conf_file} {self.user}@{self.host_server}:{REMOTE_SURICATA_DIR}")
+            process_copy_conf_to_remote = executable.Tool(
+                f"rsync -a {conf_file} {self.user}@{self.host_server}:{REMOTE_SURICATA_DIR}"
+            )
             process_copy_conf_to_remote.run()
             self.conf_file = remote_conf_file
         else:
@@ -135,59 +143,65 @@ class Suricata_manager():
             file_name: str = rules_file.split("/")[-1]
             rules_file = f"{REMOTE_SURICATA_DIR}{file_name}"
 
-            process_copy_rules_to_remote = executable.Tool(f"rsync -a {rules_file} {self.user}@{self.host_server}:{REMOTE_SURICATA_DIR}")
+            process_copy_rules_to_remote = executable.Tool(
+                f"rsync -a {rules_file} {self.user}@{self.host_server}:{REMOTE_SURICATA_DIR}"
+            )
             process_copy_rules_to_remote.run()
 
         self.rules_file = rules_file
 
     def get_path_to_binary(self) -> str:
-        process_copy_conf_to_remote = executable.Tool("which suricata",
-                                                        sudo=True,
-                                                        executor=self.host_executor,
-                                                        failure_verbosity="no-error"
-                                                    )
+        process_copy_conf_to_remote = executable.Tool(
+            "which suricata",
+            sudo=True,
+            executor=self.host_executor,
+            failure_verbosity="no-error",
+        )
         stdout, stderr = process_copy_conf_to_remote.run()
 
         assert stderr == "", "Could not find suricata in PATH"
         return stdout.strip()
+
     def _change_remote_dir_permissions(self):
         process_set_permissions = executable.Tool(
-                                                f"""if [ -d {REMOTE_SURICATA_DIR} ];
+            f"""if [ -d {REMOTE_SURICATA_DIR} ];
                                                 then chmod -R 766 {REMOTE_SURICATA_DIR};
                                                 else exit 0;
                                                 fi""",
-                                                sudo=True,
-                                                executor=self.host_executor)
+            sudo=True,
+            executor=self.host_executor,
+        )
         process_set_permissions.run()
 
     def kill(self):
-        proccess_kill = executable.Tool("pkill Suricata-Main || true",
-                                            sudo=True,
-                                            executor=self.host_executor)
+        proccess_kill = executable.Tool(
+            "pkill Suricata-Main || true", sudo=True, executor=self.host_executor
+        )
         proccess_kill.run()
 
     def is_alive(self):
-        process_find_suri_process = executable.Tool("ps aux | grep suricata | grep -v grep || true",
-                                            sudo=True,
-                                            executor=self.host_executor
-                                            )
+        process_find_suri_process = executable.Tool(
+            "ps aux | grep suricata | grep -v grep || true",
+            sudo=True,
+            executor=self.host_executor,
+        )
         suri = process_find_suri_process.run()[0]
         if not suri:
             raise SuriDown
 
     def wait_on_start(self) -> None:
-        """Wait until Suricata is started, then continue
-        """
+        """Wait until Suricata is started, then continue"""
         can_continue = False
         self.last_start_delay = 0
         while not can_continue:
             time.sleep(1)
             self.last_start_delay += 1
-            process_wait_on_start = executable.Tool("suricatasc -c uptime",
-                                        sudo=True,
-                                        executor=self.host_executor,
-                                        failure_verbosity="no-error"
-                                        )
+            process_wait_on_start = executable.Tool(
+                "suricatasc -c uptime",
+                sudo=True,
+                executor=self.host_executor,
+                failure_verbosity="no-error",
+            )
 
             try:
                 stdout, _ = process_wait_on_start.run()
@@ -199,16 +213,16 @@ class Suricata_manager():
                 self.is_alive()
 
     def _wait_for_clean_start(self) -> None:
-        """Wait until previous instance of Suricata is fully shut down, then continue.
-        """
+        """Wait until previous instance of Suricata is fully shut down, then continue."""
         can_continue = False
         while not can_continue:
             time.sleep(3)
-            process_wait_on_end = executable.Tool("suricatasc -c uptime",
-                                        sudo=True,
-                                        executor=self.host_executor,
-                                        failure_verbosity="no-error"
-                                        )
+            process_wait_on_end = executable.Tool(
+                "suricatasc -c uptime",
+                sudo=True,
+                executor=self.host_executor,
+                failure_verbosity="no-error",
+            )
 
             try:
                 stdout, _ = process_wait_on_end.run()
@@ -221,51 +235,52 @@ class Suricata_manager():
 
     def start(self) -> None:
         """Remove Suricata PID file and local and remote
-            eve.json/eve-stats.json statistic files and start suricata as a daemon
-            on remote machine.
+        eve.json/eve-stats.json statistic files and start suricata as a daemon
+        on remote machine.
         """
 
         self._wait_for_clean_start()
 
-        process_destroy_pid = executable.Tool(f"rm -f {self._pid_file}",
-                                                sudo=True,
-                                                executor=self.host_executor
-                                                )
+        process_destroy_pid = executable.Tool(
+            f"rm -f {self._pid_file}", sudo=True, executor=self.host_executor
+        )
         process_destroy_pid.run()
         time.sleep(2)
 
-        process_destroy_eve = executable.Tool(f"rm -f {os.path.join(self.log_dir, 'eve.json')}",
-                                                sudo=True,
-                                                executor=self.host_executor
-                                                )
+        process_destroy_eve = executable.Tool(
+            f"rm -f {os.path.join(self.log_dir, 'eve.json')}",
+            sudo=True,
+            executor=self.host_executor,
+        )
         process_destroy_eve.run()
         time.sleep(2)
 
-        process_destroy_eve_stats = executable.Tool(f"rm -f {os.path.join(self.log_dir, 'eve-stats.json')}",
-                                                sudo=True,
-                                                executor=self.host_executor
-                                                )
+        process_destroy_eve_stats = executable.Tool(
+            f"rm -f {os.path.join(self.log_dir, 'eve-stats.json')}",
+            sudo=True,
+            executor=self.host_executor,
+        )
         process_destroy_eve_stats.run()
         time.sleep(2)
 
-        proces_destroy_suricata_log = executable.Tool(f"rm -f {os.path.join(self.log_dir, 'suricata.log')} || true",
-                                                sudo=True,
-                                                executor=self.host_executor
-                                                )
+        proces_destroy_suricata_log = executable.Tool(
+            f"rm -f {os.path.join(self.log_dir, 'suricata.log')} || true",
+            sudo=True,
+            executor=self.host_executor,
+        )
         proces_destroy_suricata_log.run()
         time.sleep(2)
 
-        process_destroy_tmp_files = executable.Tool(f"rm -rf {self.local_tmp_stats}/suricata-{self.user}",
-                                                    sudo=True,
-                                                    )
+        process_destroy_tmp_files = executable.Tool(
+            f"rm -rf {self.local_tmp_stats}/suricata-{self.user}",
+            sudo=True,
+        )
         process_destroy_tmp_files.run()
         time.sleep(2)
 
         suri_cmd = f"suricata -c {self.conf_file} -l {self.log_dir} -S {self.rules_file} -D --{self.capture_mode} --pidfile {self._pid_file}"
         print(f"Running command: {suri_cmd}")
-        process_suri = executable.Tool(suri_cmd,
-                                       sudo=True,
-                                       executor=self.host_executor)
+        process_suri = executable.Tool(suri_cmd, sudo=True, executor=self.host_executor)
         process_suri.run()
 
         if not self.asynch:
@@ -273,35 +288,43 @@ class Suricata_manager():
 
     def stop(self) -> None:
         """Get PID of running Suricata and kill it with SIGTERM.
-            Fetch remote files onto local machine.
+        Fetch remote files onto local machine.
         """
-        proccess_get_pid = executable.Tool("pidof suricata",
-                                    sudo=True,
-                                    executor=self.host_executor,
-                                    failure_verbosity="no-error")
+        proccess_get_pid = executable.Tool(
+            "pidof suricata",
+            sudo=True,
+            executor=self.host_executor,
+            failure_verbosity="no-error",
+        )
 
         not_killed = True
         while not_killed:
             try:
                 suri_pid, _ = proccess_get_pid.run()
 
-                proccess_kill = executable.Tool(f"kill -15 {suri_pid}",
-                                                sudo=True,
-                                                executor=self.host_executor,
-                                                failure_verbosity="no-error")
+                proccess_kill = executable.Tool(
+                    f"kill -15 {suri_pid}",
+                    sudo=True,
+                    executor=self.host_executor,
+                    failure_verbosity="no-error",
+                )
                 proccess_kill.run()
                 time.sleep(2)
 
             except ExecutableProcessError:
                 try:
-                    check_successful_end_process = executable.Tool(f'cd {self.log_dir} && cat suricata.log | grep "Notice: suricata: Signal Received.  Stopping engine."',
-                                                    sudo=True,
-                                                    executor=self.host_executor)
+                    check_successful_end_process = executable.Tool(
+                        f'cd {self.log_dir} && cat suricata.log | grep "Notice: suricata: Signal Received.  Stopping engine."',
+                        sudo=True,
+                        executor=self.host_executor,
+                    )
                     check_successful_end_process.run()
                 except ExecutableProcessError:
                     raise SuriDown
 
                 not_killed = False
 
-        process_copy_result_to_local = executable.Tool(f"rsync -r {self.user}@{self.host_server}:{self.log_dir}/ {self.local_tmp_stats}/suricata-{self.user}/")
+        process_copy_result_to_local = executable.Tool(
+            f"rsync -r {self.user}@{self.host_server}:{self.log_dir}/ {self.local_tmp_stats}/suricata-{self.user}/"
+        )
         process_copy_result_to_local.run()

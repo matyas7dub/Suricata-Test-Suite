@@ -11,12 +11,15 @@ from pathlib import Path
 from typing import List, Tuple
 
 Graph_function_params = Tuple[List[float], List[float], str]
+
+
 @dataclass
 class GraphLine:
     x_axis: List[float]
     y_axis: List[float]
     line_name: str
     parameters: dict
+
 
 @dataclass
 class ResultsRow:
@@ -26,14 +29,16 @@ class ResultsRow:
     rx_bytes: int = 0
     rx_packets: int = 0
 
+
 def parse_row(data: dict) -> ResultsRow:
     return ResultsRow(
-        tx_time=float(data['transmit_seconds']),
-        tx_bytes=int(data['trex_tx_bytes']),
-        tx_packets=int(data['trex_tx_packets']),
-        rx_bytes=int(data['suricata_rx_bytes']),
-        rx_packets=int(data['suricata_rx_packets']),
+        tx_time=float(data["transmit_seconds"]),
+        tx_bytes=int(data["trex_tx_bytes"]),
+        tx_packets=int(data["trex_tx_packets"]),
+        rx_bytes=int(data["suricata_rx_bytes"]),
+        rx_packets=int(data["suricata_rx_packets"]),
     )
+
 
 def process_results_line(x_axis: List[float], y_axis: List[float], stats: dict):
     r_row: ResultsRow = parse_row(stats)
@@ -46,8 +51,9 @@ def process_results_line(x_axis: List[float], y_axis: List[float], stats: dict):
 
     dropped_pkts: int = r_row.tx_packets - r_row.rx_packets
     print(f"Dropped packets total: {dropped_pkts}")
-    y_axis.append(100*dropped_pkts/r_row.tx_packets if r_row.tx_packets != 0 else 0)
+    y_axis.append(100 * dropped_pkts / r_row.tx_packets if r_row.tx_packets != 0 else 0)
     print(y_axis)
+
 
 def process_info_line(info: dict, file_names: List[str], first_in_json) -> str:
     graph_name: str = info.get("test_name", "")
@@ -57,6 +63,7 @@ def process_info_line(info: dict, file_names: List[str], first_in_json) -> str:
     if run_comment != "":
         graph_name += f" - {run_comment}"
     return graph_name
+
 
 def get_min_first_x_axis(graph_lines: List[GraphLine]) -> float:
     """
@@ -73,16 +80,21 @@ def get_min_first_x_axis(graph_lines: List[GraphLine]) -> float:
             min = graph_line.x_axis[0]
     return min
 
+
 def make_graph(graph_lines: List[GraphLine], file_names: List[str]):
     output_dir: Path = Path(__file__).parent.parent / "results" / "graphs"
     os.makedirs(output_dir, exist_ok=True)
-    x_label: str = 'Transmit speed [Mbps]'
-    y_label: str = 'Dropped packets (%)'
+    x_label: str = "Transmit speed [Mbps]"
+    y_label: str = "Dropped packets (%)"
 
     print(graph_lines)
-    plt.rcParams.update({'font.size': 7.5})
+    plt.rcParams.update({"font.size": 7.5})
     for graph_line in graph_lines:
-        plt.plot(graph_line.x_axis, graph_line.y_axis, label = graph_line.line_name + " " + str(graph_line.parameters))
+        plt.plot(
+            graph_line.x_axis,
+            graph_line.y_axis,
+            label=graph_line.line_name + " " + str(graph_line.parameters),
+        )
 
     plt.xlim(left=(get_min_first_x_axis(graph_lines) // 1000) * 1000)
     plt.xlabel(x_label)
@@ -93,6 +105,7 @@ def make_graph(graph_lines: List[GraphLine], file_names: List[str]):
     plt.margins(x=0.01, y=0.01)
     plt.show()
     plt.savefig(str(output_dir / "-".join(file_names)))
+
 
 def main(*args):
     graph_lines: List[GraphLine] = []
@@ -110,12 +123,17 @@ def main(*args):
             for line in json_file:
                 agg_dict: dict = json.loads(line)
                 if agg_dict.get("event", "") == "test_results":
-                    parameters = {key.split(".")[-1]:value for (key,value) in agg_dict.get("parameters").items()}
+                    parameters = {
+                        key.split(".")[-1]: value
+                        for (key, value) in agg_dict.get("parameters").items()
+                    }
                     process_results_line(x_axis, y_axis, agg_dict)
                 if agg_dict.get("event", "") == "test_info":
                     graph_title = process_info_line(agg_dict, file_names, first_check)
                     if not first_check:
-                        graph_lines.append(GraphLine(x_axis, y_axis, graph_title, parameters))
+                        graph_lines.append(
+                            GraphLine(x_axis, y_axis, graph_title, parameters)
+                        )
                         x_axis = []
                         y_axis = []
                     first_check = False
@@ -123,12 +141,15 @@ def main(*args):
 
     make_graph(graph_lines, file_names)
 
-if __name__ == '__main__':
-    if len(sys.argv) < 1:
-        raise SyntaxError('Insufficient arguments.')
 
-    parser = argparse.ArgumentParser(usage='%(prog)s [path to aggregated1.json] [path to aggregated2.json] ...')
-    parser.add_argument(nargs='+',dest='paths to files')
+if __name__ == "__main__":
+    if len(sys.argv) < 1:
+        raise SyntaxError("Insufficient arguments.")
+
+    parser = argparse.ArgumentParser(
+        usage="%(prog)s [path to aggregated1.json] [path to aggregated2.json] ..."
+    )
+    parser.add_argument(nargs="+", dest="paths to files")
     args = parser.parse_args()
 
     main(*sys.argv[1:])

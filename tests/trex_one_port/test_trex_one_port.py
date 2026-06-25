@@ -18,15 +18,27 @@ from lbr_testsuite import trex
 from util.add_vlan import edit_vlan
 from util.suricata_manager import Suricata_manager, SuriDown
 from util.suri_util import save_stats, TestInfo, RunInfo
-from conftest import kill_pytest, get_trex_multi, suri_interface_bind ,Suri_conf, send_pcap_to_trex, return_filename
+from conftest import (
+    kill_pytest,
+    get_trex_multi,
+    suri_interface_bind,
+    Suri_conf,
+    send_pcap_to_trex,
+    return_filename,
+)
 
-TARGET_VLAN = 15 # claret
+TARGET_VLAN = 15  # claret
 TARGET_MAC = "08:C0:EB:88:C5:38"
 
-@pytest.mark.parametrize("rules_config", [
-    {"name": "norules", "path": "/dev/null/"},
-    {"name": "rules", "path": "/var/lib/suricata/rules/suricata.rules"}
-], ids=["norules", "rules"])
+
+@pytest.mark.parametrize(
+    "rules_config",
+    [
+        {"name": "norules", "path": "/dev/null/"},
+        {"name": "rules", "path": "/var/lib/suricata/rules/suricata.rules"},
+    ],
+    ids=["norules", "rules"],
+)
 def test_trex_one_port(
     request: pytest.FixtureRequest,
     trex_generators: dict,
@@ -40,9 +52,11 @@ def test_trex_one_port(
     get_heatup_duration: int,
     get_path_to_pcap: str,
     change_vlan_id: bool,
-    rules_config: dict
+    rules_config: dict,
 ):
-    trex_manager: trex.TRexManager = trex.TRexManager(trex.TRexMachinesPool(trex_generators))
+    trex_manager: trex.TRexManager = trex.TRexManager(
+        trex.TRexMachinesPool(trex_generators)
+    )
 
     suri_daemon: Suricata_manager = Suricata_manager(
         request,
@@ -54,34 +68,39 @@ def test_trex_one_port(
     )
     signal.signal(signal.SIGINT, kill_pytest)
 
-    test_info = TestInfo(result_path=result_path,
-                         traffic_duration=get_traffic_duration,
-                         traffic_generator=True,
-                         heatup_duration=get_heatup_duration,
-                         suricata_path_to_bin=suri_daemon.get_path_to_binary(),
-                         suricata_rules_paths=[suri_daemon.rules_file],
-                         suricata_config_path=suri_daemon.conf_file,
-                         utilized_programs_info=utilized_programs_info
-                         )
+    test_info = TestInfo(
+        result_path=result_path,
+        traffic_duration=get_traffic_duration,
+        traffic_generator=True,
+        heatup_duration=get_heatup_duration,
+        suricata_path_to_bin=suri_daemon.get_path_to_binary(),
+        suricata_rules_paths=[suri_daemon.rules_file],
+        suricata_config_path=suri_daemon.conf_file,
+        utilized_programs_info=utilized_programs_info,
+    )
 
     traffic_generator: trex.TRexStateless = trex_manager.request_stateless(request)
     traffic_generator.set_dst_mac(TARGET_MAC)
     traffic_generator.set_vlan(TARGET_VLAN)
 
     test_variant_name = f"{suri_conf.test_name}_{rules_config['name']}"
-    trex_multipliers: List[float] = get_trex_multi(get_settings_file, suri_conf.server, suri_conf.pcie, test_variant_name)
+    trex_multipliers: List[float] = get_trex_multi(
+        get_settings_file, suri_conf.server, suri_conf.pcie, test_variant_name
+    )
 
     if change_vlan_id:
         pcap_filename = edit_vlan(get_path_to_pcap, TARGET_VLAN)
     else:
         pcap_filename = get_path_to_pcap
-    
+
     send_pcap_to_trex(pcap_filename, request)
 
     for idx, multiplier in enumerate(trex_multipliers, 1):
         run_info = RunInfo(multiplier=multiplier)
 
-        print(f"\n[Progress] multiplier {idx}/{len(trex_multipliers)} | param_file={request.config.getoption('--param-file')} | params={params}")
+        print(
+            f"\n[Progress] multiplier {idx}/{len(trex_multipliers)} | param_file={request.config.getoption('--param-file')} | params={params}"
+        )
         print(f"sending packets at {run_info.multiplier} * default cps of .pcap")
 
         traffic_generator.reset()
@@ -92,13 +111,13 @@ def test_trex_one_port(
             pytest.fail("Suricata is down.")
 
         traffic_generator.get_handler().push_remote(
-            pcap_filename=f"/tmp/pcaps/{return_filename(pcap_filename)}", 
-            ports=[0], 
-            ipg_usec=100, 
-            speedup=200*run_info.multiplier, 
-            duration=test_info.traffic_duration
+            pcap_filename=f"/tmp/pcaps/{return_filename(pcap_filename)}",
+            ports=[0],
+            ipg_usec=100,
+            speedup=200 * run_info.multiplier,
+            duration=test_info.traffic_duration,
         )
-        
+
         traffic_generator.wait_on_traffic()
 
         try:
