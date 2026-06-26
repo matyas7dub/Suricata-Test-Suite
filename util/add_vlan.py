@@ -1,6 +1,7 @@
 import dpkt
 import socket
 
+
 def fix_checksums(eth):
     ip = None
     if isinstance(eth.data, dpkt.ethernet.VLANtag8021Q):
@@ -20,17 +21,22 @@ def fix_checksums(eth):
     if isinstance(ip.data, dpkt.tcp.TCP):
         tcp = ip.data
         tcp.sum = 0
-        pseudo_hdr = dpkt.struct.pack('!4s4sBBH', ip.src, ip.dst, 0, socket.IPPROTO_TCP, len(tcp))
+        pseudo_hdr = dpkt.struct.pack(
+            "!4s4sBBH", ip.src, ip.dst, 0, socket.IPPROTO_TCP, len(tcp)
+        )
         tcp.sum = dpkt.in_cksum(pseudo_hdr + bytes(tcp))
     elif isinstance(ip.data, dpkt.udp.UDP):
         udp = ip.data
         udp.sum = 0
-        pseudo_hdr = dpkt.struct.pack('!4s4sBBH', ip.src, ip.dst, 0, socket.IPPROTO_UDP, len(udp))
+        pseudo_hdr = dpkt.struct.pack(
+            "!4s4sBBH", ip.src, ip.dst, 0, socket.IPPROTO_UDP, len(udp)
+        )
         udp.sum = dpkt.in_cksum(pseudo_hdr + bytes(udp))
+
 
 def edit_vlan(pcap_filename, vlan_id):
     created_pcap_filename = pcap_filename.replace(".pcap", "1.pcap")
-    with open(pcap_filename, 'rb') as f_in, open(created_pcap_filename, 'wb') as f_out:
+    with open(pcap_filename, "rb") as f_in, open(created_pcap_filename, "wb") as f_out:
         reader = dpkt.pcap.Reader(f_in)
         writer = dpkt.pcap.Writer(f_out)
 

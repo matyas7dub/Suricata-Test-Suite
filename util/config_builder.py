@@ -82,7 +82,7 @@ class ConfigBuilder:
 
     def with_params(self, params: Dict) -> Self:
         for k, v in params.items():
-            if k == 'queues' or k == 'rx_descriptors':
+            if k == "queues" or k == "rx_descriptors":
                 continue
             self.__proc.set_value(k, v, mustexist=True)
 
