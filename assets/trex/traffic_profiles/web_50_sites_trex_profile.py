@@ -62,9 +62,6 @@ pcaps = [
 
 
 class Web50SitesProfile(BaseTrexClientManager, pcaps=pcaps):
-    def get_stf_profile(self) -> Path:
-        return self.PCAP_PATH_PREFIX / "web_50_sites" / "profile.yaml"
-
     def stf_config_hook(self, config: ConfigBuilder) -> ConfigBuilder:
         config.add_option("[0].memory.traffic_mbuf_2048", 128_000)
         return config

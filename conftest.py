@@ -1,7 +1,9 @@
 """
 Author(s): Adam Kiripolský <adamkiripolsky.official@gmail.com>
+           Dávid Hanko <davihan11@gmail.com>
+           Matyáš Sedmidubský <matyas.sedmidubsky@cesnet.cz>
 
-Copyright: (C) 2023 CESNET, z.s.p.o.
+Copyright: (C) 2023 - 2026 CESNET, z.s.p.o.
 """
 
 import sys
@@ -43,13 +45,6 @@ def pytest_addoption(parser):
             "Examples: \n"
             "    --remote-host='claret'\n"
         ),
-    )
-    parser.addoption(
-        "--user",
-        type=str,
-        default=None,
-        action="store",
-        help=("Specify user that operates on the machine. "),
     )
     parser.addoption(
         "--suricata-hugepages",
@@ -127,28 +122,44 @@ def pytest_addoption(parser):
         action="store",
         help=("Generate traffic with this VLAN ID. 0 (default) for untagged."),
     )
+    parser.addoption(
+        "--prefer-trex-mode",
+        type=str,
+        choices=["astf", "stf", "stl"],
+        default=None,
+        action="store",
+        help=(
+            "Run tests with the specified trex mode if available. If not, fallback to default."
+        ),
+    )
+    parser.addoption(
+        "--force-trex-mode",
+        type=str,
+        choices=["astf", "stf", "stl"],
+        default=None,
+        action="store",
+        help=(
+            "Run tests with the specified trex mode if available. If not, skip test."
+        ),
+    )
 
 
 def get_suri_executor(request) -> remote_executor.Executor:
     host_name = get_host_internal(request)
-    user = get_user_internal(request)
+    user = os.environ["USER"]
 
     return remote_executor.RemoteExecutor(host=host_name, user=user)
 
 
 def get_trex_executor(request):
     trex_name = get_trex_internal(request)
-    user = get_user_internal(request)
+    user = os.environ["USER"]
 
     return remote_executor.RemoteExecutor(host=trex_name, user=user)
 
 
 def get_host_internal(request) -> Tuple[str, str]:
     return request.config.getoption("--remote-host")
-
-
-def get_user_internal(request) -> str:
-    return request.config.getoption("--user")
 
 
 def get_trex_internal(request):
@@ -225,20 +236,6 @@ def return_filename(pcap_filename):
     match = re.search(r"[^\/]+\.pcap$", pcap_filename)
     assert match, "file is incorrectly specified"
     return match.group(0)
-
-
-def send_pcap_to_trex(pcap_filename, request):
-
-    pcaps_dir_trex = executable.Tool(
-        "mkdir -p /tmp/pcaps/ && chmod 777 /tmp/pcaps/",
-        executor=get_trex_executor(request),
-        sudo=True,
-    )
-    pcaps_dir_trex.run()
-
-    os.system(
-        f"rsync -z --checksum --update {pcap_filename} $(whoami)@{get_trex_internal(request)}.liberouter.org:/tmp/pcaps"
-    )
 
 
 @pytest.fixture(scope="function")
