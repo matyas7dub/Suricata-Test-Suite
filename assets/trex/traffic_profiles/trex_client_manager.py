@@ -16,6 +16,7 @@ from typing import Any, Callable, Literal, NamedTuple, Self, cast
 
 from lbr_testsuite.trex import (
     TRexAdvancedStateful,
+    TRexLegacyStateful,
     TRexManager,
     TRexStateless,
 )
@@ -199,8 +200,9 @@ class BaseTrexClientManager:
                     self.server.set_vlan(target_vlan)
 
             case TrexMode.STF:
-                self.stf_generator = CTRexClient(trex_hostname)
-                self.trex_version = self.stf_generator.get_trex_version()["Version"]
+                self.stf_generator: TRexLegacyStateful = manager.request_legacy_stateful(request)
+                self.stf_daemon: CTRexClient = self.stf_generator.get_daemon()
+                self.trex_version = self.stf_daemon.get_trex_version()["Version"]
 
                 parent_dir_path = self.get_remote_data_path(Path(""))
                 mkdir_remote(parent_dir_path, trex_hostname)
@@ -527,7 +529,7 @@ class BaseTrexClientManager:
                     )
                     self.duration = 30
 
-                self.stf_generator.start_trex(
+                self.stf_generator.start(
                     f=str(self.get_remote_data_path(self.get_stf_profile()).absolute()),
                     d=str(self.duration),
                     m=str(self.multiplier),
@@ -555,12 +557,7 @@ class BaseTrexClientManager:
                 self.stop()
 
             case TrexMode.STF:
-                assert self.duration is not None
-                start = time()
-                while (
-                    self.stf_generator.is_running() and time() - start < self.duration
-                ):
-                    sleep(1)
+                self.stf_generator.wait_on_traffic(self.duration)
                 self.stop()
 
     def stop(self) -> None:
@@ -579,8 +576,7 @@ class BaseTrexClientManager:
                 self.server.stop()
 
             case TrexMode.STF:
-                if self.stf_generator.is_running():
-                    self.stf_generator.stop_trex()
+                self.stf_generator.stop()
 
     def update_runinfo(self, run_info: RunInfo) -> None:
         """
@@ -614,8 +610,7 @@ class BaseTrexClientManager:
                 ) + int(self.client.get_stats().get("total", {}).get("opackets", 0))
             case TrexMode.STF:
                 return int(
-                    self.stf_generator.get_result_obj()
-                    .get_latest_dump()
+                    self.stf_generator.get_stats()
                     .get("trex-global", {})
                     .get("data", {})
                     .get("m_total_tx_pkts", 0)
@@ -634,8 +629,7 @@ class BaseTrexClientManager:
                 ) + int(self.client.get_stats().get("total", {}).get("obytes", 0))
             case TrexMode.STF:
                 return int(
-                    self.stf_generator.get_result_obj()
-                    .get_latest_dump()
+                    self.stf_generator.get_stats()
                     .get("trex-global", {})
                     .get("data", {})
                     .get("m_total_tx_bytes", 0)
@@ -660,8 +654,7 @@ class BaseTrexClientManager:
                 ) + float(self.client.get_stats().get("total", {}).get("tx_pps", 0.0))
             case TrexMode.STF:
                 return float(
-                    self.stf_generator.get_result_obj()
-                    .get_latest_dump()
+                    self.stf_generator.get_stats()
                     .get("trex-global", {})
                     .get("data", {})
                     .get("m_tx_pps", 0.0)
@@ -683,7 +676,7 @@ class BaseTrexClientManager:
                     return self.client.get_stats()
 
             case TrexMode.STF:
-                return self.stf_generator.get_result_obj().get_latest_dump()
+                return self.stf_generator.get_stats()
 
 
 class BaseAdHocTrex(BaseTrexClientManager, pcaps=[]):
