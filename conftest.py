@@ -23,7 +23,6 @@ import re
 
 from dataclasses import dataclass
 from lbr_testsuite.executable import executable, remote_executor
-from lbr_trex_client.interactive import trex
 from pathlib import Path
 from itertools import product
 from param import filter
@@ -38,7 +37,7 @@ logger = get_logger(__name__)
 STL_BURST_DEFAULTS: tuple[float, int] = (200_000, 10_000_000)
 
 # alias lbr_trex_client.interactive.trex to trex for importing native TRex profiles
-sys.modules["trex"] = trex
+import lbr_trex_client  # noqa: E402, F401
 
 # Make the parent directory importable so that absolute package imports such as
 # ``suricata_pytests.assets...`` resolve when pytest is launched from this directory
