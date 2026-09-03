@@ -12,7 +12,7 @@ import os
 import warnings
 from pathlib import Path
 from time import sleep, time
-from typing import Callable, Dict, Literal, NamedTuple, Self
+from typing import Any, Callable, Literal, NamedTuple, Self
 
 from lbr_testsuite.trex import (
     TRexAdvancedStateful,
@@ -640,7 +640,9 @@ class BaseTrexClientManager:
                 ]["data"]
                 return float(data.get("m_tx_pps", 0.0))
 
-    def get_stats(self, role: Literal["server"] | Literal["client"] = "server") -> Dict:
+    def get_stats(
+        self, role: Literal["server"] | Literal["client"] = "server"
+    ) -> dict[str, Any]:
         assert role in ("server", "client")
 
         match self.mode:
