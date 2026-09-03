@@ -10,7 +10,10 @@
 
 
 
-set -xe
+set -e
+if [ "$LOGLEVEL" = "DEBUG" ]; then
+    set -x
+fi
 
 usage(){
   set +x
