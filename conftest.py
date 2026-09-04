@@ -88,7 +88,7 @@ def _log_level_type(value: str) -> str | int:
     )
 
 
-def _fmt_thousands(value: int) -> str:
+def fmt_thousands(value: int) -> str:
     """Format an integer with space thousands separators (e.g. 200000 -> '200 000')."""
     return f"{value:,}".replace(",", " ")
 
@@ -287,8 +287,8 @@ def pytest_addoption(parser):
         help=(
             "In STL mode, send a fixed burst of PACKET_COUNT packets at PPS "
             "instead of replaying for the configured duration. With no "
-            f"arguments, defaults to {_fmt_thousands(int(STL_BURST_DEFAULTS[0]))} "
-            f"PPS and {_fmt_thousands(STL_BURST_DEFAULTS[1])} packets. Only "
+            f"arguments, defaults to {fmt_thousands(int(STL_BURST_DEFAULTS[0]))} "
+            f"PPS and {fmt_thousands(STL_BURST_DEFAULTS[1])} packets. Only "
             "applies to STL mode; ignored (with a warning) for other modes."
         ),
     )
