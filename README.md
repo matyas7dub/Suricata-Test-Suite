@@ -550,12 +550,14 @@ is preferred as it leads to simpler tuning and debugging. For examples see `http
 When defining an **STF profile** you might want to define `get_stf_profile` which should return a path to a
 [traffic profile](https://trex-tgn.cisco.com/trex/doc/trex_manual.html#_traffic_yaml_f_argument_of_stateful).
 You should generate these dynamically, since the profile contains MAC addresses and a mismatch will cause
-your packets to not be delivered.
+your packets to not be delivered. The base implementation generates the profile from the supplied pcaps
+and caches it under `tmp/` under a name derived from its inputs, so it is only regenerated when the
+inputs (pcaps, weights, TRex version) change; delete `tmp/` to force regeneration.
 
 You might also want to change some things in the [platform config](https://trex-tgn.cisco.com/trex/doc/trex_manual.html#_platform_yaml_cfg_argument)
 which can be done by defining an `stf_config_hook`. This function gets a `ConfigBuilder` instance with the config that would be sent to
 trex and you can either modify this or create a completely new `ConfigBuilder` instance.
-For examples see `realistic_traffic_trex_profile.py`
+For examples see `performance_tests/web_50_sites_trex_profile.py`
 
 **STL profiles** are defined only with a list of PCAPs and should really only be used as a simple fallback, but STF is preferred
 and can be used in the same situations as STL. When multiple PCAPs are supplied, the base class merges them into a single
