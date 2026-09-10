@@ -7,9 +7,7 @@ SPDX-License-Identifier: BSD-3-Clause
 TRex profile template for use in Suricata-Test-Suite
 """
 
-import hashlib
 import logging
-import os
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -49,13 +47,13 @@ from trex_client import CTRexClient
 
 from conftest import fmt_bytes, fmt_thousands
 from util.add_vlan import edit_vlan
+from util.cache_util import cache_path, try_cache
 from util.config_builder import DEFAULT_TREX_CONF, ConfigBuilder
 from util.suri_util import RunInfo
 from util.trex_util import (
     TrexMode,
+    get_merged_pcap,
     get_trex_mac,
-    merge_pcaps,
-    merged_pcap_name,
     mkdir_remote,
     send_to_remote,
 )
@@ -258,14 +256,7 @@ class BaseTrexClientManager:
         if len(self.pcaps) > 1:
             local_paths = [p.path for p in self.pcaps]
             weights = [float(p.weight) for p in self.pcaps]
-            # Deterministic name so rsync skips upload on reruns;
-            # use --force-pcap-upload to bypass when source pcaps change.
-            merged_name = merged_pcap_name(local_paths, weights)
-            merged_path = merge_pcaps(
-                local_paths,
-                weights,
-                self.PCAP_PATH_PREFIX / merged_name,
-            )
+            merged_path = get_merged_pcap(local_paths, weights)
             self.pcaps = [Pcap(merged_path, sum(weights))]
 
         assert len(self.pcaps) == 1
@@ -372,9 +363,8 @@ class BaseTrexClientManager:
 
     def _build_stf_config(self, target_mac: str, target_vlan: int) -> Path:
         """Build the platform config and return its local path."""
-        os.makedirs("tmp", exist_ok=True)
         config = ConfigBuilder(
-            "tmp/trex_cfg.yaml",
+            str(cache_path("trex_cfg.yaml", persistent=False)),
             str(DEFAULT_TREX_CONF),
         )
         config.set_option("[0].interfaces", [self.trex_request.pcie, "dummy"])
@@ -477,18 +467,19 @@ class BaseTrexClientManager:
         The file name embeds a digest of the profile inputs (pcap names,
         weights and the TRex version, since the profile references remote
         pcap paths below /opt/trex/<version>/), so a regenerated profile
-        never collides with a stale one. If the file already exists it is
-        reused as-is; delete `tmp/` to force regeneration.
+        never collides with a stale one. If a cached profile already exists
+        it is reused as-is; delete `.cache/` to force regeneration.
         """
-        parts = [str(p.path.name) for p in self.pcaps]
-        parts += [str(p.weight) for p in self.pcaps]
-        parts.append(self.trex_version)
-        digest = hashlib.md5("|".join(parts).encode()).hexdigest()[:12]
-        profile_path = Path(f"tmp/stf_profile_{digest}.yaml").absolute()
-        if profile_path.exists():
+        key_parts: list[object] = [str(p.path.name) for p in self.pcaps]
+        key_parts += [str(p.weight) for p in self.pcaps]
+        key_parts.append(self.trex_version)
+
+        target_name = "stf_profile.yaml"
+        profile_path = try_cache(target_name, key_parts)
+        if profile_path is not None:
             return profile_path
 
-        os.makedirs(profile_path.parent, exist_ok=True)
+        profile_path = cache_path(target_name, *key_parts)
         with open(profile_path, mode="w+") as f:
             f.write("[]\n")
         profile = ConfigBuilder(str(profile_path), str(profile_path))
