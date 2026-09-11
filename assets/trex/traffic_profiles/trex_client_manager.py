@@ -153,7 +153,7 @@ class BaseTrexClientManager:
     pcaps: list[Pcap]
     profile_pcaps: ClassVar[list[Pcap]] = []
     multiplier: float = 1.0
-    duration: int = 60
+    duration: int
     # set by the `_init_*` dispatch at the end of `__init__`
     trex_version: str  # pyright: ignore[reportUninitializedInstanceVariable]
     _state: StlState | AstfState | StfState
@@ -195,6 +195,8 @@ class BaseTrexClientManager:
                 bool, request.config.getoption("--force-pcap-upload")
             ),
         )
+
+        self.duration = cast(int, request.config.getoption("--traffic-duration"))
 
         # warn once per profile instead of on every run()/multiplier iteration
         if self.trex_request.burst is not None and mode is not TrexMode.STL:
@@ -530,18 +532,6 @@ class BaseTrexClientManager:
 
     # --- traffic lifecycle: props, prepare, run, wait, stop ---------------
 
-    def set_props(self, multiplier: float, duration: int) -> None:
-        """
-        Sets the internal multiplier and duration for later use in other functions.
-        """
-        self.multiplier = multiplier
-        self.duration = duration
-        logger.debug(
-            "TRex traffic properties set: multiplier=%s duration=%s",
-            multiplier,
-            duration,
-        )
-
     def prepare(self) -> None:
         """
         Reset TRex instances and load profiles.
@@ -584,7 +574,6 @@ class BaseTrexClientManager:
         """
         Start traffic from TRex and block until finished.
         Optionally only start traffic with `blocking=False`.
-        Uses `multiplier`/`duration` previously set with `set_props`.
 
         `heatup` (seconds) and `on_measurement_start` let the caller sample
         TRex's own transmit counters at the start of the measurement window
