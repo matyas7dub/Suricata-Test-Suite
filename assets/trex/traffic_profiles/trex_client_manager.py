@@ -158,7 +158,7 @@ class BaseTrexClientManager:
     trex_version: str  # pyright: ignore[reportUninitializedInstanceVariable]
     _state: StlState | AstfState | StfState
 
-    BASE_IPG_USEC = 12.0  # ~1 Gbps at 1500 bytes per packet
+    BASE_IPG_USEC = 120.0
     PCAP_PATH_PREFIX = Path(__file__).parent / "pcaps"
 
     def __new__(cls, *args, **kwargs) -> Self:
@@ -256,7 +256,7 @@ class BaseTrexClientManager:
         if len(self.pcaps) > 1:
             local_paths = [p.path for p in self.pcaps]
             weights = [float(p.weight) for p in self.pcaps]
-            merged_path = get_merged_pcap(local_paths, weights)
+            merged_path = get_merged_pcap(local_paths, weights, 1_000_000)
             self.pcaps = [Pcap(merged_path, sum(weights))]
 
         assert len(self.pcaps) == 1
