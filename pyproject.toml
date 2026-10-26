@@ -24,6 +24,12 @@ dependencies = [
     "yamlpath>=3.9.1",
 ]
 
+[tool.pytest.ini_options]
+filterwarnings = [
+    # ignore deprecation warnings from the Cisco TRex library
+    "ignore:^urllib\\.parse\\.split.*:DeprecationWarning"
+]
+
 [tool.ruff]
 target-version = "py311"
 
