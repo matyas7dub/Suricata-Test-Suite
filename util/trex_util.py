@@ -8,8 +8,10 @@ SPDX-License-Identifier: BSD-3-Clause
 import logging
 import os
 import subprocess
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+from typing import Any, Literal, assert_never
 from scapy.all import PcapWriter, PcapReader
 
 import pytest
@@ -24,6 +26,85 @@ class TrexMode(Enum):
     STL = 0
     ASTF = 1
     STF = 2
+
+
+@dataclass(frozen=True, slots=True)
+class TrexStats:
+    """Snapshot of TRex statistics collected with a single daemon poll.
+
+    Provides convenience accessors over the raw per-role statistics captured
+    at creation time, so several data points can be read without polling the
+    daemon again. In STL/STF mode there is only one stats source, so both
+    `server_stats` and `client_stats` refer to the same data; only ASTF has
+    separate client and server instances.
+    """
+
+    mode: TrexMode
+    server_stats: dict[str, Any]
+    client_stats: dict[str, Any]
+
+    def get_tx_packets(self) -> int:
+        """Cumulative TRex transmit packet count at snapshot time."""
+        match self.mode:
+            case TrexMode.STL:
+                return int(self.server_stats.get("total", {}).get("opackets", 0))
+            case TrexMode.ASTF:
+                return int(self._sum_totals("opackets"))
+            case TrexMode.STF:
+                return int(self._stf_data("m_total_tx_pkts"))
+            case _:
+                assert_never(self.mode)
+
+    def get_tx_bytes(self) -> int:
+        """Cumulative TRex transmit byte count at snapshot time."""
+        match self.mode:
+            case TrexMode.STL:
+                return int(self.server_stats.get("total", {}).get("obytes", 0))
+            case TrexMode.ASTF:
+                return int(self._sum_totals("obytes"))
+            case TrexMode.STF:
+                return int(self._stf_data("m_total_tx_bytes"))
+            case _:
+                assert_never(self.mode)
+
+    def get_tx_pps(self) -> float:
+        """Instantaneous TRex transmit rate (packets per second) at snapshot time.
+
+        This is TRex's own reported rate (`tx_pps`), sampled at the moment the
+        snapshot was taken. It is an instantaneous value, not an average over
+        the burst, so it is only meaningful while traffic is actively running.
+        """
+        match self.mode:
+            case TrexMode.STL:
+                return float(self.server_stats.get("total", {}).get("tx_pps", 0.0))
+            case TrexMode.ASTF:
+                return self._sum_totals("tx_pps")
+            case TrexMode.STF:
+                return self._stf_data("m_tx_pps")
+            case _:
+                assert_never(self.mode)
+
+    def get_stats(self, role: Literal["server", "client"] = "server") -> dict[str, Any]:
+        """
+        Raw statistics reported by the TRex generator at snapshot time.
+
+        `role` only applies to ASTF mode, which has separate client and
+        server instances; in STL/STF both roles return the same data.
+        """
+        assert role in ("server", "client")
+        return self.server_stats if role == "server" else self.client_stats
+
+    def _sum_totals(self, key: str) -> float:
+        """Sum a counter over the ASTF server and client instances."""
+        return float(self.server_stats.get("total", {}).get(key, 0)) + float(
+            self.client_stats.get("total", {}).get(key, 0)
+        )
+
+    def _stf_data(self, key: str) -> float:
+        """Read a counter from the STF global statistics section."""
+        return float(
+            self.server_stats.get("trex-global", {}).get("data", {}).get(key, 0)
+        )
 
 
 def _packet_generator(

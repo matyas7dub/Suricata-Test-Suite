@@ -21,6 +21,9 @@ from typing import Any, List
 from pathlib import Path
 from shutil import copy as copy_content
 
+from conftest import fmt_bytes, fmt_thousands
+from util.trex_util import TrexStats
+
 logger = logging.getLogger(__name__)
 
 
@@ -62,7 +65,7 @@ class RunInfo:
     suricata_start_delay: int = 0
     trex_client_stats: dict | None = None
     trex_server_stats: dict | None = None
-    trex_pretty_stats: dict = field(default_factory=dict)
+    trex_stats: TrexStats | None = None
     # actual transmit time; 0 means "not measured" (fall back to traffic_duration)
     transmit_seconds: float = 0.0
     # TRex transmit counters sampled at the start of the measurement window
@@ -95,7 +98,7 @@ def get_rx_packets_from_file(file: str, skip=0) -> int:
 
     try:
         skipped = get_rx_packets_until(file, skip)
-        logger.debug("Ignored %d packets", skipped)
+        logger.debug("Ignored %s packets", fmt_thousands(skipped))
         return int(pkts) - skipped
     except ValueError:
         return 0
@@ -107,7 +110,7 @@ def get_rx_bytes_from_file(file: str, skip=0) -> int:
 
     try:
         skipped = get_rx_bytes_until(file, skip)
-        logger.debug("Ignored %d bytes", skipped)
+        logger.debug("Ignored %s", fmt_bytes(skipped))
         return int(bytes) - skipped
     except ValueError:
         return 0
@@ -317,6 +320,8 @@ def save_aggregated_stats(
         transmit_seconds = 0
     else:
         transmit_seconds = test_info.traffic_duration
+
+    assert run_info.trex_stats is not None
     output: dict = {
         "event": "test_results",
         "trex_multiplier": run_info.multiplier,
@@ -328,9 +333,9 @@ def save_aggregated_stats(
         "suricata_rte_flow_filtered_packets": get_flow_filtered_packets_from_file(
             eve_stats_path, skip=delay_time
         ),
-        "trex_tx_packets": run_info.trex_pretty_stats["opackets"]
+        "trex_tx_packets": run_info.trex_stats.get_tx_packets()
         - run_info.trex_tx_packets_at_start,
-        "trex_tx_bytes": run_info.trex_pretty_stats["obytes"]
+        "trex_tx_bytes": run_info.trex_stats.get_tx_bytes()
         - run_info.trex_tx_bytes_at_start,
         "parameters": out_params,
     }

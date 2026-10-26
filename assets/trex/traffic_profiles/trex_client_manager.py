@@ -15,9 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from time import sleep, time
 from typing import (
-    Any,
     ClassVar,
-    Literal,
     NamedTuple,
     ParamSpec,
     Self,
@@ -53,6 +51,7 @@ from util.config_builder import DEFAULT_TREX_CONF, ConfigBuilder
 from util.suri_util import RunInfo
 from util.trex_util import (
     TrexMode,
+    TrexStats,
     get_merged_pcap,
     get_trex_mac,
     mkdir_remote,
@@ -609,7 +608,7 @@ class BaseTrexClientManager:
         spent transmitting (e.g. the burst duration in STL exact-count mode).
         """
 
-        logger.debug(
+        logger.info(
             "Starting TRex traffic: mode=%s multiplier=%s duration=%s blocking=%s",
             self.trex_request.mode.name,
             self.multiplier,
@@ -742,7 +741,7 @@ class BaseTrexClientManager:
             remaining = target - time()
             if remaining > 0:
                 sleep(remaining)
-            samples.append(self.get_tx_pps())
+            samples.append(self.stats().get_tx_pps())
         run_info.trex_tx_pps_at_start = samples[0]
         run_info.trex_tx_pps_samples = samples
         logger.debug(
@@ -848,17 +847,18 @@ class BaseTrexClientManager:
         """
         Stop the TRex generators and log the transmitted packet/byte counts.
         """
-        logger.info(
-            "Stopping TRex traffic (%s, %s pkts, %s)",
-            self.trex_request.mode.name,
-            fmt_thousands(self.get_tx_packets()),
-            fmt_bytes(self.get_tx_bytes()),
-        )
         switch_on_mode(
             self.trex_request.mode,
             self._stl_stop,
             self._astf_stop,
             self._stf_stop,
+        )
+        stats = self.stats()
+        logger.info(
+            "Stopping TRex traffic (%s, %s pkts, %s)",
+            self.trex_request.mode.name,
+            fmt_thousands(stats.get_tx_packets()),
+            fmt_bytes(stats.get_tx_bytes()),
         )
 
     def _stl_stop(self) -> None:
@@ -873,154 +873,53 @@ class BaseTrexClientManager:
 
     # --- stats ------------------------------------------------------------
 
-    def update_runinfo(self, run_info: RunInfo) -> None:
+    def stats(self) -> TrexStats:
         """
-        Alternative to `get_stats` so that the API is independent of the used TRex mode.
+        Collect a snapshot of TRex statistics with a single poll of the daemon.
+
+        The returned `TrexStats` provides convenience accessors
+        (`get_tx_packets`, `get_tx_bytes`, ...) over the captured data, so
+        several data points can be read without re-polling the daemon.
         """
-        logger.debug("Updating run info from TRex stats")
-        switch_on_mode(
-            self.trex_request.mode,
-            self._stl_update_runinfo,
-            self._astf_update_runinfo,
-            self._stf_update_runinfo,
-            run_info=run_info,
-        )
-
-        run_info.trex_pretty_stats["opackets"] = self.get_tx_packets()
-        run_info.trex_pretty_stats["obytes"] = self.get_tx_bytes()
-
-    def _stl_update_runinfo(self, run_info: RunInfo) -> None:
-        run_info.trex_server_stats = self.get_stats()
-        run_info.trex_client_stats = None
-
-    def _astf_update_runinfo(self, run_info: RunInfo) -> None:
-        run_info.trex_client_stats = self._astf.client.get_stats()
-        run_info.trex_server_stats = self._astf.server.get_stats()
-
-    def _stf_update_runinfo(self, run_info: RunInfo) -> None:
-        run_info.trex_server_stats = self.get_stats()
-        run_info.trex_client_stats = None
-
-    def get_tx_packets(self) -> int:
-        """Current cumulative TRex transmit packet count."""
-        return int(
-            switch_on_mode(
-                self.trex_request.mode,
-                self._stl_tx_packets,
-                self._astf_tx_packets,
-                self._stf_tx_packets,
-            )
-        )
-
-    def _stl_tx_packets(self) -> float:
-        return float(
-            self._stl.generator.get_stats().get("total", {}).get("opackets", 0)
-        )
-
-    def _astf_tx_packets(self) -> float:
-        return float(
-            self._astf.server.get_stats().get("total", {}).get("opackets", 0)
-        ) + float(self._astf.client.get_stats().get("total", {}).get("opackets", 0))
-
-    def _stf_tx_packets(self) -> float:
-        return float(
-            self._stf.generator.get_result_obj()
-            .get_latest_dump()
-            .get("trex-global", {})
-            .get("data", {})
-            .get("m_total_tx_pkts", 0)
-        )
-
-    def get_tx_bytes(self) -> int:
-        """Current cumulative TRex transmit byte count."""
-        return int(
-            switch_on_mode(
-                self.trex_request.mode,
-                self._stl_tx_bytes,
-                self._astf_tx_bytes,
-                self._stf_tx_bytes,
-            )
-        )
-
-    def _stl_tx_bytes(self) -> float:
-        return float(self._stl.generator.get_stats().get("total", {}).get("obytes", 0))
-
-    def _astf_tx_bytes(self) -> float:
-        return float(
-            self._astf.server.get_stats().get("total", {}).get("obytes", 0)
-        ) + float(self._astf.client.get_stats().get("total", {}).get("obytes", 0))
-
-    def _stf_tx_bytes(self) -> float:
-        return float(
-            self._stf.generator.get_result_obj()
-            .get_latest_dump()
-            .get("trex-global", {})
-            .get("data", {})
-            .get("m_total_tx_bytes", 0)
-        )
-
-    def get_tx_pps(self) -> float:
-        """Current instantaneous TRex transmit rate (packets per second).
-
-        This is TRex's own reported rate (`tx_pps`), sampled at the moment of
-        the call. It is an instantaneous snapshot, not an average over the
-        burst, so it should be sampled while traffic is actively running to be
-        meaningful.
-        """
-        return switch_on_mode(
-            self.trex_request.mode,
-            self._stl_tx_pps,
-            self._astf_tx_pps,
-            self._stf_tx_pps,
-        )
-
-    def _stl_tx_pps(self) -> float:
-        return float(
-            self._stl.generator.get_stats().get("total", {}).get("tx_pps", 0.0)
-        )
-
-    def _astf_tx_pps(self) -> float:
-        return float(
-            self._astf.server.get_stats().get("total", {}).get("tx_pps", 0.0)
-        ) + float(self._astf.client.get_stats().get("total", {}).get("tx_pps", 0.0))
-
-    def _stf_tx_pps(self) -> float:
-        return float(
-            self._stf.generator.get_result_obj()
-            .get_latest_dump()
-            .get("trex-global", {})
-            .get("data", {})
-            .get("m_tx_pps", 0.0)
-        )
-
-    def get_stats(self, role: Literal["server", "client"] = "server") -> dict[str, Any]:
-        """
-        Raw statistics reported by the TRex generator.
-
-        `role` only applies to ASTF mode, which has separate client and
-        server instances; in STL/STF it is ignored.
-        """
-        assert role in ("server", "client")
-
         return switch_on_mode(
             self.trex_request.mode,
             self._stl_stats,
             self._astf_stats,
             self._stf_stats,
-            role=role,
         )
 
-    def _stl_stats(self, role: Literal["server", "client"]) -> dict[str, Any]:
-        return self._stl.generator.get_stats()
+    def _stl_stats(self) -> TrexStats:
+        raw = self._stl.generator.get_stats()
+        return TrexStats(mode=TrexMode.STL, server_stats=raw, client_stats=raw)
 
-    def _astf_stats(self, role: Literal["server", "client"]) -> dict[str, Any]:
-        assert role in ("server", "client")
-        if role == "server":
-            return self._astf.server.get_stats()
-        return self._astf.client.get_stats()
+    def _astf_stats(self) -> TrexStats:
+        return TrexStats(
+            mode=TrexMode.ASTF,
+            server_stats=self._astf.server.get_stats(),
+            client_stats=self._astf.client.get_stats(),
+        )
 
-    def _stf_stats(self, role: Literal["server", "client"]) -> dict[str, Any]:
-        return self._stf.generator.get_result_obj().get_latest_dump()
+    def _stf_stats(self) -> TrexStats:
+        # `is_running` updates the result object
+        _ = self._stf.generator.is_running()
+        raw = self._stf.generator.get_result_obj().get_latest_dump()
+        return TrexStats(mode=TrexMode.STF, server_stats=raw, client_stats=raw)
+
+    def update_runinfo(self, run_info: RunInfo) -> None:
+        """
+        Record TRex statistics into `run_info` using a single daemon poll.
+        """
+        logger.debug("Updating run info from TRex stats")
+        stats = self.stats()
+
+        run_info.trex_stats = stats
+        run_info.trex_server_stats = stats.get_stats("server")
+        # only ASTF has a distinct client instance
+        run_info.trex_client_stats = (
+            stats.get_stats("client")
+            if self.trex_request.mode is TrexMode.ASTF
+            else None
+        )
 
 
 class BaseAdHocTrex(BaseTrexClientManager, pcaps=[]):

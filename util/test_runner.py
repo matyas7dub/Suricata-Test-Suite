@@ -99,8 +99,9 @@ class TrexTestRun(TestRun):
     def _run_traffic(self, multiplier: float, duration: int, run_info: RunInfo):
         # sample TRex's own counters at the measurement-window start
         def on_measurement_start():
-            run_info.trex_tx_packets_at_start = self.trex_client.get_tx_packets()
-            run_info.trex_tx_bytes_at_start = self.trex_client.get_tx_bytes()
+            stats = self.trex_client.stats()
+            run_info.trex_tx_packets_at_start = stats.get_tx_packets()
+            run_info.trex_tx_bytes_at_start = stats.get_tx_bytes()
 
         self.trex_client.run(
             blocking=True,
