@@ -9,14 +9,15 @@ Test runner class for Suricata tests.
 Provide a common interface for running Suricata tests, including setup, traffic generation, and stats collection.
 """
 
-from time import time
+import logging
+from time import sleep, time
 
 import pytest
-import logging
 
+from assets.trex.traffic_profiles.trex_client_manager import BaseTrexClientManager
 from conftest import fmt_bytes, fmt_thousands
+from util.suri_util import RunInfo, TestInfo, save_stats
 from util.suricata_manager import Suricata_manager, SuriDown
-from util.suri_util import RunInfo, save_stats, TestInfo
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ class TestRun:
 
         start_time = time()
         run_info = RunInfo(multiplier=multiplier)
+
         try:
             self._run_traffic(multiplier, duration, run_info)
         finally:
@@ -66,14 +68,15 @@ class TestRun:
                 pytest.fail("Suricata was down.")
 
         self._collect_stats(run_info)
-        run_info.suricata_start_delay = self.suri_daemon.last_start_delay
         stats = save_stats(self.params, self.request, self.test_info, run_info)
 
         logger.info(
-            "Run ended (%ds, %s pkts, %s)",
+            "Run ended (%ds %s/%s pkts, %s/%s)",
             int(time() - start_time),
-            fmt_thousands(stats.get("suricata_rx_packets", 0)),
-            fmt_bytes(stats.get("suricata_rx_bytes", 0)),
+            fmt_thousands(stats["suricata_rx_packets"]),
+            fmt_thousands(stats["trex_tx_packets"]),
+            fmt_bytes(stats["suricata_rx_bytes"]),
+            fmt_bytes(stats["trex_tx_bytes"]),
         )
 
 
@@ -82,7 +85,7 @@ class TrexTestRun(TestRun):
 
     def __init__(
         self,
-        trex_client,
+        trex_client: BaseTrexClientManager,
         suri_daemon: Suricata_manager,
         test_info: TestInfo,
         params: dict,
@@ -97,18 +100,47 @@ class TrexTestRun(TestRun):
         self.trex_client.prepare()
 
     def _run_traffic(self, multiplier: float, duration: int, run_info: RunInfo):
-        # sample TRex's own counters at the measurement-window start
-        def on_measurement_start():
-            stats = self.trex_client.stats()
-            run_info.trex_tx_packets_at_start = stats.get_tx_packets()
-            run_info.trex_tx_bytes_at_start = stats.get_tx_bytes()
+        heatup = self.test_info.heatup_duration
 
-        self.trex_client.run(
-            blocking=True,
-            heatup=self.test_info.heatup_duration,
-            on_measurement_start=on_measurement_start,
-            run_info=run_info,
-        )
+        if heatup:
+            self.trex_client.duration += heatup
+
+        self.trex_client.run(blocking=False, run_info=run_info)
+
+        if heatup:
+            sleep(heatup)
+
+            # TRex is polled twice and averaged, to compensate the slight
+            # difference in time between Suricata and TRex stat sampling
+            trex_stats_before = self.trex_client.stats()
+            suri_stats = self.suri_daemon.stats()
+            trex_stats_after = self.trex_client.stats()
+
+            run_info.suricata_rx_packets_at_start = suri_stats.get("decoder", {})[
+                "pkts"
+            ]
+            run_info.suricata_rx_bytes_at_start = suri_stats.get("decoder", {})["bytes"]
+            run_info.suricata_flow_packets_at_start = (
+                suri_stats.get("capture", {})
+                .get("dpdk", {})
+                .get("rte_flow_filtered", 0)
+            )
+            run_info.trex_tx_packets_at_start = (
+                trex_stats_before.get_tx_packets() + trex_stats_after.get_tx_packets()
+            ) // 2
+            run_info.trex_tx_bytes_at_start = (
+                trex_stats_before.get_tx_bytes() + trex_stats_after.get_tx_bytes()
+            ) // 2
+
+            logger.debug(
+                "Heatup finished (%s/%s pkts, %s/%s)",
+                fmt_thousands(run_info.suricata_rx_packets_at_start),
+                fmt_thousands(run_info.trex_tx_packets_at_start),
+                fmt_bytes(run_info.suricata_rx_bytes_at_start),
+                fmt_bytes(run_info.trex_tx_bytes_at_start),
+            )
+
+        self.trex_client.wait_on_traffic()
 
     def _collect_stats(self, run_info: RunInfo):
         self.trex_client.update_runinfo(run_info)

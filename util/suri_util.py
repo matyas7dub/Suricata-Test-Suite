@@ -21,7 +21,6 @@ from typing import Any, List
 from pathlib import Path
 from shutil import copy as copy_content
 
-from conftest import fmt_bytes, fmt_thousands
 from util.trex_util import TrexStats
 
 logger = logging.getLogger(__name__)
@@ -62,17 +61,19 @@ class TestInfo:
 class RunInfo:
     multiplier: float = 0
     should_save_test_info: bool = True
-    suricata_start_delay: int = 0
     trex_client_stats: dict | None = None
     trex_server_stats: dict | None = None
     trex_stats: TrexStats | None = None
     # actual transmit time; 0 means "not measured" (fall back to traffic_duration)
     transmit_seconds: float = 0.0
-    # TRex transmit counters sampled at the start of the measurement window
+    # stats after heatup == at measurement start
     trex_tx_packets_at_start: int = 0
     trex_tx_bytes_at_start: int = 0
     trex_tx_pps_at_start: float = 0.0
     trex_tx_pps_samples: list[float] = field(default_factory=list)
+    suricata_rx_packets_at_start: int = 0
+    suricata_rx_bytes_at_start: int = 0
+    suricata_flow_packets_at_start: int = 0
 
 
 def get_last_stats_line(file: str) -> str:
@@ -92,111 +93,22 @@ def put_last_stats_into_file(source_file: str, output_file: str):
         new_file.write(get_last_stats_line(source_file))
 
 
-def get_rx_packets_from_file(file: str, skip=0) -> int:
+def get_rx_packets_from_file(file: str) -> int:
     json_loaded = json.loads(get_last_stats_line(file))
-    pkts = jq.compile(".stats.decoder.pkts").input(json_loaded).first()
-
-    try:
-        skipped = get_rx_packets_until(file, skip)
-        logger.debug("Ignored %s packets", fmt_thousands(skipped))
-        return int(pkts) - skipped
-    except ValueError:
-        return 0
+    return int(jq.compile(".stats.decoder.pkts").input(json_loaded).first())
 
 
-def get_rx_bytes_from_file(file: str, skip=0) -> int:
+def get_rx_bytes_from_file(file: str) -> int:
     json_loaded = json.loads(get_last_stats_line(file))
-    bytes = jq.compile(".stats.decoder.bytes").input(json_loaded).first()
-
-    try:
-        skipped = get_rx_bytes_until(file, skip)
-        logger.debug("Ignored %s", fmt_bytes(skipped))
-        return int(bytes) - skipped
-    except ValueError:
-        return 0
+    return int(jq.compile(".stats.decoder.bytes").input(json_loaded).first())
 
 
-def get_rx_packets_until(file: str, until: int) -> int:
-    try:
-        json_file = open(file, "r")
-    except FileNotFoundError:
-        return 0
-
-    json_loaded = json_file.read()
-    output = (
-        jq.compile(
-            f"select(.stats.uptime >= {until})"
-            "| [.] | first"
-            "| {total: .stats.decoder.pkts, missed: .stats.capture.dpdk.imissed}"
-        )
-        .input_text(json_loaded)
-        .first()
-    )
-
-    try:
-        return int(output["total"]) - int(output["missed"])
-    except ValueError:
-        return 0
-
-
-def get_rx_bytes_until(file: str, until: int) -> int:
-    try:
-        json_file = open(file, "r")
-    except FileNotFoundError:
-        return 0
-
-    json_loaded = json_file.read()
-    output = (
-        jq.compile(
-            f"select(.stats.uptime >= {until})"
-            "| [.] | first"
-            "| {total: .stats.decoder.bytes, average: .stats.decoder.avg_pkt_size, missed: .stats.capture.dpdk.imissed}"
-        )
-        .input_text(json_loaded)
-        .first()
-    )
-
-    try:
-        return int(output["total"]) - int(output["missed"]) * int(output["average"])
-    except ValueError:
-        return 0
-
-
-def get_flow_filtered_packets_from_file(file: str, skip=0) -> int:
+def get_flow_filtered_packets_from_file(file: str) -> int:
     json_loaded = json.loads(get_last_stats_line(file))
-    flow_filtered = (
+    return int(
         jq.compile(".stats.capture.dpdk.rte_flow_filtered").input(json_loaded).first()
+        or 0
     )
-
-    try:
-        skipped = get_flow_filtered_packets_until(file, skip)
-        logger.debug("Ignored %d flow filtered packets", skipped)
-        return int(flow_filtered) - skipped
-    except (ValueError, TypeError):
-        return 0
-
-
-def get_flow_filtered_packets_until(file: str, until: int) -> int:
-    try:
-        json_file = open(file, "r")
-    except FileNotFoundError:
-        return 0
-
-    json_loaded = json_file.read()
-    output = (
-        jq.compile(
-            f"select(.stats.uptime >= {until})"
-            "| [.] | first"
-            "| .stats.capture.dpdk.rte_flow_filtered"
-        )
-        .input_text(json_loaded)
-        .first()
-    )
-
-    try:
-        return int(output)
-    except (ValueError, TypeError):
-        return 0
 
 
 def get_stats_from_string(lines: str) -> str:
@@ -311,8 +223,9 @@ def save_aggregated_stats(
     out_params.update(
         dpdk_version=test_info.utilized_programs_info.get("dpdk_version", "undefined")
     )
+
     eve_stats_path = os.path.join(suri_stats_path, "eve-stats.json")
-    delay_time = test_info.heatup_duration + run_info.suricata_start_delay
+
     # use the measured burst time when available, else the configured duration
     if run_info.transmit_seconds > 0:
         transmit_seconds = run_info.transmit_seconds
@@ -326,13 +239,14 @@ def save_aggregated_stats(
         "event": "test_results",
         "trex_multiplier": run_info.multiplier,
         "transmit_seconds": transmit_seconds,
-        "suricata_rx_packets": get_rx_packets_from_file(
-            eve_stats_path, skip=delay_time
-        ),
-        "suricata_rx_bytes": get_rx_bytes_from_file(eve_stats_path, skip=delay_time),
+        "suricata_rx_packets": get_rx_packets_from_file(eve_stats_path)
+        - run_info.suricata_rx_packets_at_start,
+        "suricata_rx_bytes": get_rx_bytes_from_file(eve_stats_path)
+        - run_info.suricata_rx_bytes_at_start,
         "suricata_rte_flow_filtered_packets": get_flow_filtered_packets_from_file(
-            eve_stats_path, skip=delay_time
-        ),
+            eve_stats_path
+        )
+        - run_info.suricata_flow_packets_at_start,
         "trex_tx_packets": run_info.trex_stats.get_tx_packets()
         - run_info.trex_tx_packets_at_start,
         "trex_tx_bytes": run_info.trex_stats.get_tx_bytes()

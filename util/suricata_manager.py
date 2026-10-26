@@ -107,8 +107,6 @@ class Suricata_manager:
         self._set_rules(rules_file)
         self._change_remote_dir_permissions()
 
-        self.last_start_delay: int = 0
-
     def addfinalizer(self, request):
         request.addfinalizer(self.kill)
 
@@ -247,8 +245,7 @@ class Suricata_manager:
             if not can_continue:
                 time.sleep(1)
 
-        self.last_start_delay = int(time.time() - start_time)
-        logger.info("Suricata started after %d seconds", self.last_start_delay)
+        logger.info("Suricata started after %d seconds", int(time.time() - start_time))
 
     def _wait_for_clean_start(self) -> None:
         """Wait until previous instance of Suricata is fully shut down, then continue."""

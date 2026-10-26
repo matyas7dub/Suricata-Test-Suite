@@ -592,17 +592,11 @@ class BaseTrexClientManager:
     def run(
         self,
         blocking: bool = True,
-        heatup: int = 0,
-        on_measurement_start: Callable[[], None] | None = None,
         run_info: RunInfo | None = None,
     ) -> None:
         """
         Start traffic from TRex and block until finished.
         Optionally only start traffic with `blocking=False`.
-
-        `heatup` (seconds) and `on_measurement_start` let the caller sample
-        TRex's own transmit counters at the start of the measurement window
-        (after the heatup period), while traffic is actually running.
 
         `run_info` (optional) is used to record the actual wall-clock time TRex
         spent transmitting (e.g. the burst duration in STL exact-count mode).
@@ -621,39 +615,19 @@ class BaseTrexClientManager:
             self._stl_run,
             self._astf_run,
             self._stf_run,
-            blocking=blocking,
-            heatup=heatup,
-            on_measurement_start=on_measurement_start,
             run_info=run_info,
         )
 
         if blocking:
             self.wait_on_traffic()
+            logger.debug("TRex traffic finished")
 
         if burst_start is not None and run_info is not None:
             run_info.transmit_seconds = time() - burst_start
 
-        logger.debug("TRex traffic finished")
-
-    def _mark_measurement_start(
-        self,
-        blocking: bool,
-        heatup: int,
-        on_measurement_start: Callable[[], None] | None,
-    ) -> None:
-        if not blocking:
-            return
-        if heatup > 0:
-            sleep(heatup)
-        if on_measurement_start is not None:
-            on_measurement_start()
-
     def _stl_run(
         self,
         *,
-        blocking: bool,
-        heatup: int,
-        on_measurement_start: Callable[[], None] | None,
         run_info: RunInfo | None,
     ) -> float | None:
         """
@@ -664,17 +638,9 @@ class BaseTrexClientManager:
         burst = self.trex_request.burst
 
         if burst is not None:
-            return self._stl_run_burst(
-                client,
-                burst,
-                blocking=blocking,
-                heatup=heatup,
-                on_measurement_start=on_measurement_start,
-                run_info=run_info,
-            )
-        self._stl_run_duration(
-            client, heatup=heatup, on_measurement_start=on_measurement_start
-        )
+            return self._stl_run_burst(client, burst, run_info=run_info)
+
+        self._stl_run_duration(client)
         return None
 
     def _stl_run_burst(
@@ -682,9 +648,6 @@ class BaseTrexClientManager:
         client: STLClient,
         burst: tuple[float, int],
         *,
-        blocking: bool,
-        heatup: int,
-        on_measurement_start: Callable[[], None] | None,
         run_info: RunInfo | None,
     ) -> float | None:
         """
@@ -712,10 +675,6 @@ class BaseTrexClientManager:
             count=0,
             duration=burst_duration,
         )
-        if blocking and on_measurement_start is not None:
-            if heatup > 0 and burst_duration > 0:
-                sleep(min(heatup, burst_duration))
-            on_measurement_start()
         if run_info is not None:
             self._sample_burst_pps(
                 run_info,
@@ -751,13 +710,7 @@ class BaseTrexClientManager:
             self.multiplier,
         )
 
-    def _stl_run_duration(
-        self,
-        client: STLClient,
-        *,
-        heatup: int,
-        on_measurement_start: Callable[[], None] | None,
-    ) -> None:
+    def _stl_run_duration(self, client: STLClient) -> None:
         """Replay the pcap in a loop for `self.duration` seconds."""
         pcap = self.pcaps[0]
         start = time()
@@ -776,31 +729,13 @@ class BaseTrexClientManager:
                 # wait if port was not cleared yet
                 sleep(0.05)
             elapsed = time() - start
-            if elapsed >= heatup and on_measurement_start is not None:
-                on_measurement_start()
-                on_measurement_start = None
 
-    def _astf_run(
-        self,
-        *,
-        blocking: bool,
-        heatup: int,
-        on_measurement_start: Callable[[], None] | None,
-        run_info: RunInfo | None,
-    ) -> float | None:
+    def _astf_run(self, *, run_info: RunInfo | None) -> float | None:
         self._astf.server.start()
         self._astf.client.start(duration=self.duration)
-        self._mark_measurement_start(blocking, heatup, on_measurement_start)
         return None
 
-    def _stf_run(
-        self,
-        *,
-        blocking: bool,
-        heatup: int,
-        on_measurement_start: Callable[[], None] | None,
-        run_info: RunInfo | None,
-    ) -> float | None:
+    def _stf_run(self, *, run_info: RunInfo | None) -> float | None:
         if self.duration < 30:
             warnings.warn(
                 UserWarning(
@@ -809,13 +744,15 @@ class BaseTrexClientManager:
             )
             self.duration = 30
 
+        # clear results to detect invalid reads
+        self._stf.generator.get_result_obj().clear_results()
+
         self._stf.generator.start_trex(
             f=str(self._stf.remote_profile),
             d=str(self.duration),
             m=str(self.multiplier),
             cfg=str(self._stf.remote_config),
         )
-        self._mark_measurement_start(blocking, heatup, on_measurement_start)
         return None
 
     def wait_on_traffic(self) -> None:
