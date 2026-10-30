@@ -8,6 +8,7 @@ Copyright: (C) 2023 - 2026 CESNET, z.s.p.o.
 SPDX-License-Identifier: BSD-3-Clause
 """
 
+import json
 import logging
 import os
 import time
@@ -15,7 +16,7 @@ import os.path
 
 from lbr_testsuite.executable import executable, remote_executor, ExecutableProcessError
 from util.suri_util import is_running
-from typing import List
+from typing import Any, List
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,17 @@ class Suricata_manager:
             logger.error("Suricata process not found on %s", self.host_server)
             raise SuriDown
         logger.debug("Suricata process found on %s", self.host_server)
+
+    def stats(self) -> dict[str, Any]:
+        get_stats = executable.Tool(
+            "suricatasc -c dump-counters",
+            sudo=True,
+            executor=self.host_executor,
+            failure_verbosity="no-error",
+        )
+
+        stats_json, _ = get_stats.run()
+        return json.loads(stats_json)["message"]
 
     def wait_on_start(self) -> None:
         """Wait until Suricata is started, then continue"""
