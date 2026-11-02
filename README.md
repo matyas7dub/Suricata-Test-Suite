@@ -158,7 +158,7 @@ DEFAULT_TARGET_MAC="08:C0:EB:88:C5:38"  # -  (-tm)
 DEFAULT_TARGET_VLAN=0                        # -  (-tv; untagged by default)
 DEFAULT_TESTS="http_simple nfs_smb_simple"   #    (-d; http_simple by default)
 DEFAULT_TIME=300                             #    (-t)
-DEFAULT_HEATUP=0                             #    (-ht)
+DEFAULT_HEATUP=0                             #    (-ht; traffic time before measurement starts)
 DEFAULT_HUGEPAGES="6G"                       #    (-sh)
 LOGLEVEL="INFO"                              #    (-sl)
 DEFAULT_SUITE_LOG_FILE=false                 #    (-sf; set to true to enable)
@@ -461,7 +461,9 @@ For each `param.py` combination (e.g., `params0`, `params1`), and for each multi
 2. **Modify config** — Apply parameter values from `param.py` to the Suricata YAML config.
 3. **Start Suricata** — Launch as a daemon on the remote host via SSH.
 4. **Start TRex** — Client and server begin traffic exchange at the current multiplier rate.
-5. **Wait** — Traffic runs for the configured duration (`--traffic-duration`).
+5. **Wait** — Traffic runs for the configured duration (`--traffic-duration`). When a heatup
+   (`--heatup-duration`) is set, traffic actually runs for `heatup + duration`, but only the
+   part after the heatup is measured — see [Heatup](#heatup) below.
 6. **Stop TRex** — Stop traffic generation.
 7. **Stop Suricata** — Send SIGTERM, wait for graceful shutdown, fetch `eve.json` statistics.
 8. **Save results** — Record throughput statistics for this multiplier.
@@ -474,6 +476,28 @@ Progress is printed during execution:
 sending packets at 0.3 * default cps of .pcap
 ```
 
+### Heatup
+
+The `--heatup-duration` option (`-ht` in `pytest_start.sh`, `DEFAULT_HEATUP` in a `.env` file)
+delays the start of the measurement window: traffic runs for `heatup + --traffic-duration`
+seconds, but only the traffic generated after the heatup counts toward the results. This keeps
+startup transients (e.g. the Suricata flow table filling up) out of the measured numbers.
+
+The heatup is implemented by taking a snapshot of both generators' counters once the heatup has
+elapsed, rather than by trying to reconstruct warm-up traffic from the `eve.json` log afterwards:
+
+- **Suricata** counters (`decoder.pkts`, `decoder.bytes`,
+  `capture.dpdk.rte_flow_filtered`) are polled live over the command socket with
+  `suricatasc -c dump-counters` (see `Suricata_manager.stats()`).
+- **TRex** counters are polled immediately before and after the Suricata poll, and the two
+  readings are averaged to compensate for the slight difference in sampling time between the
+  two daemons.
+
+All totals in the aggregated results (`suricata_rx_packets`, `suricata_rx_bytes`,
+`suricata_rte_flow_filtered_packets`, `trex_tx_packets`, `trex_tx_bytes`) are reported as deltas
+against this heatup-end snapshot, so warm-up traffic is not counted. With the default heatup of
+`0` no snapshots are taken and the counters simply cover the whole traffic duration.
+
 ### Binary search
 
 Binary search cycles through each `param.py` combination. The test execution flow is:
@@ -481,7 +505,8 @@ Binary search cycles through each `param.py` combination. The test execution flo
 1. **Setup** — Allocate hugepages, bind NIC, modify Suricata config.
 2. **Start Suricata** — Launch as a daemon on the remote host via SSH.
 3. **Start TRex** — Begin traffic at the current midpoint multiplier.
-4. **Wait** — Traffic runs for the configured duration (`--traffic-duration`).
+4. **Wait** — Traffic runs for the configured duration (`--traffic-duration`), with an optional
+   heatup as described in [Heatup](#heatup).
 5. **Stop TRex** — Stop traffic generation.
 6. **Stop Suricata** — SIGTERM, fetch `eve.json` statistics.
 7. **Save results** — Record throughput and drop rate for this multiplier.
