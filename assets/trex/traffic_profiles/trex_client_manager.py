@@ -8,6 +8,7 @@ TRex profile template for use in Suricata-Test-Suite
 """
 
 import logging
+import threading
 import warnings
 from collections.abc import Callable
 from copy import deepcopy
@@ -234,6 +235,15 @@ class BaseTrexClientManager:
         )
 
         self._available_pcaps = deepcopy(self.pcaps)
+
+        # state of a (possibly non-blocking) run; see `run()`/`wait_on_traffic()`
+        self._burst_start: float | None = None
+        self._run_info: RunInfo | None = None
+        # background thread sampling the tx rate during STL bursts
+        self._pps_sampler: threading.Thread | None = None
+        # the TRex clients are not thread-safe; the burst sampler thread polls
+        # the daemon concurrently with the main thread, so serialize the polls
+        self._stats_lock = threading.Lock()
 
     # --- mode-specific initialization -------------------------------------
 
@@ -564,6 +574,11 @@ class BaseTrexClientManager:
 
         logger.debug("Preparing TRex traffic: mode=%s", self.trex_request.mode.name)
 
+        # discard leftover state from a previous run (e.g. after an error)
+        self._burst_start = None
+        self._run_info = None
+        self._pps_sampler = None
+
         # pcaps are sent to the server in `__init__`
 
         switch_on_mode(
@@ -596,10 +611,13 @@ class BaseTrexClientManager:
     ) -> None:
         """
         Start traffic from TRex and block until finished.
-        Optionally only start traffic with `blocking=False`.
+        With `blocking=False` only start the traffic and return while it is
+        still running (for all modes), so the generators' counters can be
+        polled mid-run; `wait_on_traffic()` then blocks until finished.
 
         `run_info` (optional) is used to record the actual wall-clock time TRex
         spent transmitting (e.g. the burst duration in STL exact-count mode).
+        It is filled in by `wait_on_traffic()`.
         """
 
         logger.info(
@@ -610,7 +628,10 @@ class BaseTrexClientManager:
             blocking,
         )
 
-        burst_start = switch_on_mode(
+        # stored so that `wait_on_traffic()` can measure the actual transmit
+        # time even when `run()` returned before the traffic finished
+        self._run_info = run_info
+        self._burst_start = switch_on_mode(
             self.trex_request.mode,
             self._stl_run,
             self._astf_run,
@@ -621,9 +642,8 @@ class BaseTrexClientManager:
         if blocking:
             self.wait_on_traffic()
             logger.debug("TRex traffic finished")
-
-        if burst_start is not None and run_info is not None:
-            run_info.transmit_seconds = time() - burst_start
+        else:
+            logger.debug("TRex traffic started, returning before it finishes")
 
     def _stl_run(
         self,
@@ -676,12 +696,20 @@ class BaseTrexClientManager:
             duration=burst_duration,
         )
         if run_info is not None:
-            self._sample_burst_pps(
-                run_info,
-                burst_start=burst_start,
-                burst_duration=burst_duration,
-                pps=pps,
+            # sample the tx rate while the burst is running, in the background,
+            # so that `run()` returns immediately (non-blocking)
+            self._pps_sampler = threading.Thread(
+                target=self._sample_burst_pps,
+                kwargs={
+                    "run_info": run_info,
+                    "burst_start": burst_start,
+                    "burst_duration": burst_duration,
+                    "pps": pps,
+                },
+                name="trex-burst-pps-sampler",
+                daemon=True,
             )
+            self._pps_sampler.start()
         return burst_start
 
     def _sample_burst_pps(
@@ -692,43 +720,54 @@ class BaseTrexClientManager:
         burst_duration: float,
         pps: float,
     ) -> None:
-        """Sample TRex's own tx rate at fractions of the burst duration."""
-        sample_fracs = (0.10, 0.35, 0.65, 0.90)
-        samples: list[float] = []
-        for frac in sample_fracs:
-            target = burst_start + burst_duration * frac
-            remaining = target - time()
-            if remaining > 0:
-                sleep(remaining)
-            samples.append(self.stats().get_tx_pps())
-        run_info.trex_tx_pps_at_start = samples[0]
-        run_info.trex_tx_pps_samples = samples
-        logger.debug(
-            "Mid-burst tx rate samples: %s pps (expected %.2f pps, multiplier %s)",
-            ", ".join(f"{s:.2f}" for s in samples),
-            pps,
-            self.multiplier,
-        )
+        """Sample TRex's own tx rate at fractions of the burst duration.
+
+        Runs in a background thread; sleeps between the samples so they are
+        taken while the burst is still being transmitted.
+        """
+        try:
+            sample_fracs = (0.10, 0.35, 0.65, 0.90)
+            samples: list[float] = []
+            for frac in sample_fracs:
+                target = burst_start + burst_duration * frac
+                remaining = target - time()
+                if remaining > 0:
+                    sleep(remaining)
+                samples.append(self.stats().get_tx_pps())
+            run_info.trex_tx_pps_at_start = samples[0]
+            run_info.trex_tx_pps_samples = samples
+            logger.debug(
+                "Mid-burst tx rate samples: %s pps (expected %.2f pps, multiplier %s)",
+                ", ".join(f"{s:.2f}" for s in samples),
+                pps,
+                self.multiplier,
+            )
+        except Exception:
+            logger.exception("Sampling the mid-burst tx rate failed")
 
     def _stl_run_duration(self, client: STLClient) -> None:
-        """Replay the pcap in a loop for `self.duration` seconds."""
+        """Replay the pcap continuously for `self.duration` seconds, without
+        blocking (the replay runs on the TRex server; waiting is done by
+        `wait_on_traffic()`).
+        """
         pcap = self.pcaps[0]
         start = time()
-        elapsed = 0
-        while elapsed < self.duration:
+        while True:
             try:
                 client.push_remote(
                     pcap_filename=str(self.get_remote_data_path(pcap.path)),
                     ports=[0],
                     ipg_usec=self.BASE_IPG_USEC / pcap.weight,
                     speedup=self.multiplier,
-                    count=1,
-                    duration=int(self.duration - elapsed),
+                    count=0,  # replay in a loop, bounded by `duration`
+                    duration=int(self.duration),
                 )
+                return
             except TRexError:
-                # wait if port was not cleared yet
+                # wait if port was not cleared yet, give up after `duration`
+                if time() - start >= self.duration:
+                    raise
                 sleep(0.05)
-            elapsed = time() - start
 
     def _astf_run(self, *, run_info: RunInfo | None) -> float | None:
         self._astf.server.start()
@@ -766,7 +805,18 @@ class BaseTrexClientManager:
             self._stf_wait_on_traffic,
         )
 
+        # measure the transmit time of the whole run; with `blocking=False`
+        # this is the only place after the traffic actually finished
+        if self._burst_start is not None and self._run_info is not None:
+            self._run_info.transmit_seconds = time() - self._burst_start
+        self._burst_start = None
+        self._run_info = None
+
     def _stl_wait_on_traffic(self) -> None:
+        if self._pps_sampler is not None:
+            # let the sampler take its last samples while traffic still runs
+            self._pps_sampler.join()
+            self._pps_sampler = None
         self._stl.generator.wait_on_traffic()
         self.stop()
 
@@ -818,12 +868,15 @@ class BaseTrexClientManager:
         (`get_tx_packets`, `get_tx_bytes`, ...) over the captured data, so
         several data points can be read without re-polling the daemon.
         """
-        return switch_on_mode(
-            self.trex_request.mode,
-            self._stl_stats,
-            self._astf_stats,
-            self._stf_stats,
-        )
+        # the TRex clients are not thread-safe and the burst sampler thread
+        # polls them concurrently with the main thread
+        with self._stats_lock:
+            return switch_on_mode(
+                self.trex_request.mode,
+                self._stl_stats,
+                self._astf_stats,
+                self._stf_stats,
+            )
 
     def _stl_stats(self) -> TrexStats:
         raw = self._stl.generator.get_stats()
